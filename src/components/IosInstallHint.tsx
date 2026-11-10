@@ -33,7 +33,7 @@ export function IosInstallHint() {
       <div className="ios-install-head">
         <p className="ios-install-title">
           <Share size={16} aria-hidden="true" />
-          iPhone 앱으로 설치
+          iPhone 홈 화면에 추가
         </p>
         <button type="button" className="icon-button" onClick={dismiss} aria-label="안내 닫기">
           <X size={16} />

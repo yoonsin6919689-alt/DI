@@ -66,9 +66,9 @@ export function HomePage() {
               커뮤니티 채팅
             </Link>
             {appShell ? null : ios ? (
-              <a href="#install" className="btn btn-ghost">
+              <a href="/downloads/ios/DIMENSION-1.0.0.ipa" download className="btn btn-ghost">
                 <Download size={16} />
-                iPhone 앱 설치
+                iPhone 앱
               </a>
             ) : (
               <a href="/downloads/DIMENSION-1.1.0.apk" download className="btn btn-ghost">
@@ -188,8 +188,8 @@ export function HomePage() {
               <h2>폰에서 앱처럼 열기</h2>
               {ios ? (
                 <p>
-                  iPhone은 Safari로 접속한 뒤 <strong>공유 → 홈 화면에 추가</strong>를 누르면
-                  아이콘이 생기고, 앱처럼 전체화면으로 실행됩니다. 자동 로그인을 켜면 다시 로그인할 필요도 없습니다.
+                  iPhone은 PC에서 <strong>.ipa</strong>를 받아 Sideloadly로 서명하면 홈 화면에 진짜 앱으로
+                  설치됩니다. PC 없이 쓰려면 Safari에서 <strong>공유 → 홈 화면에 추가</strong>만 해도 앱처럼 열립니다.
                 </p>
               ) : (
                 <p>
@@ -200,17 +200,25 @@ export function HomePage() {
             </div>
             <div className="app-band-actions">
               {ios ? (
-                <ol className="app-steps">
-                  <li>Safari 하단의 <strong>공유</strong> 버튼 누르기</li>
-                  <li><strong>홈 화면에 추가</strong> 선택하기</li>
-                </ol>
+                <>
+                  <a href="/downloads/ios/DIMENSION-1.0.0.ipa" download className="btn btn-gold">
+                    <Download size={16} /> iPhone 앱 다운로드
+                  </a>
+                  <ol className="app-steps">
+                    <li>PC에 <strong>Sideloadly</strong>를 설치하고 아이폰을 USB로 연결</li>
+                    <li>받은 .ipa를 넣고 본인 <strong>Apple ID</strong>로 서명</li>
+                    <li>아이폰 설정 → 일반 → VPN 및 기기 관리에서 앱 <strong>신뢰</strong></li>
+                  </ol>
+                </>
               ) : (
                 <a href="/downloads/DIMENSION-1.1.0.apk" download className="btn btn-gold">
                   <Download size={16} /> Android APK 다운로드
                 </a>
               )}
               <span className="app-band-note">
-                {ios ? "설치하면 아이콘·전체화면 실행·자동 로그인 지원" : "v1.1.0 · 141KB · 설치 시 '알 수 없는 앱' 허용 필요"}
+                {ios
+                  ? "v1.0.0 · 4.1MB · 무료 Apple ID는 7일마다 재설치, 개발자 계정은 1년"
+                  : "v1.1.0 · 141KB · 설치 시 '알 수 없는 앱' 허용 필요"}
               </span>
             </div>
           </div>
