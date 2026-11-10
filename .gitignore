@@ -1,0 +1,16 @@
+node_modules/
+dist/
+.env
+.env.*
+!.env.example
+.DS_Store
+*.tsbuildinfo
+.qoder-sites/
+.qoder-sites.json
+
+# local build artifacts and secrets
+tools/android/keystore/
+tools/android/build/
+tools/ios/build/
+tools/gh/
+.DIMENSION.qoder.site

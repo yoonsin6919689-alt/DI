@@ -1,0 +1,23 @@
+name: Build iOS IPA
+
+on:
+  workflow_dispatch:
+
+jobs:
+  ipa:
+    runs-on: macos-14
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install XcodeGen
+        run: brew install xcodegen
+
+      - name: Build unsigned IPA
+        run: bash tools/ios/build-ipa.sh
+
+      - name: Upload IPA
+        uses: actions/upload-artifact@v4
+        with:
+          name: DIMENSION-unsigned-ipa
+          path: tools/ios/build/DIMENSION-unsigned.ipa
+          if-no-files-found: error

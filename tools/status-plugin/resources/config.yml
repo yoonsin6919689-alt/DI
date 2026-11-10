@@ -1,0 +1,10 @@
+site: "https://dimension-mc-wvlzuyrjbqi.qoder.website"
+# 사이트에 등록된 연동 키입니다. 임의로 바꾸면 상태 전송이 거부됩니다.
+bridge-key: "4af786762082503c5da936038bade44b4cfed893a67b7fa3"
+origin: "https://dimension-mc-wvlzuyrjbqi.qoder.website"
+# 상태와 접속 주소를 보내는 간격(초). 너무 짧게 두지 마세요.
+interval-seconds: 45
+# 접속 주소를 자동 감지하지 않고 도메인을 직접 쓰고 싶을 때만 입력하세요. (예: play.example.com)
+public-host: ''
+# 모바일(Bedrock) 접속 포트. Geyser 기본값은 19132입니다.
+bedrock-port: 19132

@@ -1,0 +1,6 @@
+name: DIMENSIONStatus
+version: 1.2.0
+main: kr.dimension.status.StatusPlugin
+api-version: '26.3'
+description: Sends the live server status and player count to the DIMENSION website.
+author: qw691
