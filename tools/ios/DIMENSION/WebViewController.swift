@@ -150,6 +150,8 @@ extension WebViewController: WKUIDelegate {
         return nil
     }
 
+    // The public file-input API landed in iOS 18.4; older systems simply never call it.
+    @available(iOS 18.4, *)
     func webView(
         _ webView: WKWebView,
         runOpenPanelWith parameters: WKOpenPanelParameters,
