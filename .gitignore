@@ -14,3 +14,6 @@ tools/android/build/
 tools/ios/build/
 tools/gh/
 .DIMENSION.qoder.site
+
+# self-hosted runtime data (SQLite database and uploaded images)
+server/data/
