@@ -12,6 +12,8 @@ class LocalError extends Error {
 
 const iso = (offsetMs = 0) => new Date(Date.now() - offsetMs).toISOString();
 const DAY = 86_400_000;
+const PORT = Number(process.env.LOCAL_API_PORT || 8000);
+const BASE = `http://127.0.0.1:${PORT}`;
 
 function seed(tables) {
   tables.notices.push(
@@ -85,7 +87,7 @@ function seed(tables) {
 function createMemoryDb() {
   const tables = {
     users: [], sessions: [], auth_limiter: [], verify_codes: [],
-    notices: [], updates: [], chat_messages: [], server_config: [], posts: [],
+    notices: [], updates: [], events: [], chat_messages: [], server_config: [], posts: [],
     mail_log: [], mail_settings: [], server_status: [], chat_presence: [],
   };
   seed(tables);
@@ -152,7 +154,7 @@ function createMemoryDb() {
 
 function createMemoryStorage() {
   const files = new Map();
-  const base = 'http://127.0.0.1:8000/local-storage/';
+  const base = BASE + '/local-storage/';
   return {
     files,
     api: {
@@ -233,7 +235,7 @@ async function start() {
       let size = 0;
       for await (const chunk of incoming) {
         size += chunk.length;
-        if (size > 32 * 1024) throw new LocalError('payload_too_large', 413);
+        if (size > 64 * 1024) throw new LocalError('payload_too_large', 413);
         chunks.push(chunk);
       }
       const hasBody = !['GET', 'HEAD'].includes(incoming.method);
@@ -255,9 +257,9 @@ async function start() {
 
   await new Promise((resolve, reject) => {
     server.once('error', reject);
-    server.listen(8000, '127.0.0.1', resolve);
+    server.listen(PORT, '127.0.0.1', resolve);
   });
-  console.log('Local Function listening on http://127.0.0.1:8000 (memory database, fixtures reset on restart)');
+  console.log(`Local Function listening on ${BASE} (memory database, fixtures reset on restart)`);
   process.once('SIGINT', () => server.close(() => process.exit(0)));
   process.once('SIGTERM', () => server.close(() => process.exit(0)));
 }

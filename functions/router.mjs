@@ -404,6 +404,93 @@ const toPost = (row, full = false) => ({
   createdAt: row.created_at,
 });
 
+const EVENT_COLUMNS = 'id,title,content,thumbnail_path,deleted,created_at,updated_at';
+
+const toEvent = (row) => ({
+  id: row.id,
+  title: row.title,
+  thumbnailPath: row.thumbnail_path,
+  blocks: JSON.parse(row.content),
+  createdAt: row.created_at,
+  updatedAt: row.updated_at,
+});
+
+async function listEvents(db) {
+  return rows(await db.from('events').select(EVENT_COLUMNS).eq('deleted', false)
+    .order('created_at', { ascending: false }).limit(50)).map(toEvent);
+}
+
+async function loadEvent(db, id) {
+  const found = rows(await db.from('events').select(EVENT_COLUMNS)
+    .eq('id', id).eq('deleted', false).limit(1));
+  if (found.length !== 1) throw new AppError('not_found', 404);
+  return found[0];
+}
+
+async function saveEvent(db, storage, request, admin, id = null) {
+  assertCanWrite(admin);
+  const existing = id ? await loadEvent(db, id) : null;
+  const body = await readJson(request, 48 * 1024);
+  const title = validateText(body?.title, { max: 120 });
+  const thumbnailPath = body?.thumbnailPath;
+  if (typeof thumbnailPath !== 'string' || !PHOTO_PATH.test(thumbnailPath)) {
+    throw new AppError('invalid_input', 400);
+  }
+  if (!Array.isArray(body?.blocks) || body.blocks.length < 1 || body.blocks.length > 24) {
+    throw new AppError('invalid_input', 400);
+  }
+  let characters = 0;
+  let images = 0;
+  const blocks = body.blocks.map((block) => {
+    if (block?.type === 'text') {
+      const text = validateText(block.text, { max: 8000 });
+      characters += [...text].length;
+      return { type: 'text', text };
+    }
+    if (block?.type === 'image' && typeof block.imagePath === 'string' && PHOTO_PATH.test(block.imagePath)) {
+      if (block.caption !== undefined && typeof block.caption !== 'string') throw new AppError('invalid_input', 400);
+      const caption = (block.caption ?? '').trim();
+      characters += [...caption].length;
+      images += 1;
+      return { type: 'image', imagePath: block.imagePath, caption };
+    }
+    throw new AppError('invalid_input', 400);
+  });
+  if (characters > 8000 || images > 8) throw new AppError('invalid_input', 400);
+  const paths = new Set([thumbnailPath, ...blocks.filter((b) => b.type === 'image').map((b) => b.imagePath)]);
+  const existingPaths = new Set(existing ? [existing.thumbnail_path,
+    ...JSON.parse(existing.content).filter((b) => b.type === 'image').map((b) => b.imagePath)] : []);
+  for (const path of paths) {
+    // Any administrator may retain this event's images; new files must belong to the uploader.
+    if (!existingPaths.has(path)) await verifyPhotoObject(requireStorage(storage), admin.id, path);
+  }
+  const values = { title, content: JSON.stringify(blocks), thumbnail_path: thumbnailPath, updated_at: new Date().toISOString() };
+  if (existing) {
+    const updated = rows(await db.from('events').update(values)
+      .eq('id', id).eq('deleted', false).select(EVENT_COLUMNS));
+    if (updated.length !== 1) throw new AppError('not_found', 404);
+    return json({ event: toEvent(updated[0]) });
+  }
+  const event = { ...values, id: crypto.randomUUID(), deleted: false, created_at: values.updated_at };
+  rows(await db.from('events').insert(event).select('id'));
+  return json({ event: toEvent(event) }, 201);
+}
+
+async function eventImage(db, storage, id, index = null) {
+  const event = await loadEvent(db, id);
+  const block = index === null ? null : JSON.parse(event.content)[index];
+  const path = index === null ? event.thumbnail_path : block?.type === 'image' ? block.imagePath : null;
+  if (!path) throw new AppError('not_found', 404);
+  try {
+    const signed = await requireStorage(storage).createSignedUrl(path, 300);
+    return new Response(null, { status: 302, headers: {
+      location: signed.signedUrl, 'cache-control': 'private, no-store', 'referrer-policy': 'no-referrer',
+    } });
+  } catch {
+    throw new AppError('storage_unavailable', 503);
+  }
+}
+
 const photoDirectory = async (userId) => (await sha256Hex(userId)).slice(0, 32);
 
 function requireStorage(storage) {
@@ -856,6 +943,15 @@ async function route(db, storage, request) {
   if (path === '/api/status' && method === 'GET') return json(await readServerStatus(db));
   if (path === '/api/notices' && method === 'GET') return json({ notices: await listNotices(db) });
   if (path === '/api/updates' && method === 'GET') return json({ updates: await listUpdates(db) });
+  if (path === '/api/events' && method === 'GET') return json({ events: await listEvents(db) });
+  const eventDetail = path.match(/^\/api\/events\/([0-9a-f-]{36})$/);
+  if (eventDetail && isUuid(eventDetail[1]) && method === 'GET') {
+    return json({ event: toEvent(await loadEvent(db, eventDetail[1])) });
+  }
+  const eventMedia = path.match(/^\/api\/events\/([0-9a-f-]{36})\/(thumbnail|images\/(\d{1,2}))$/);
+  if (eventMedia && isUuid(eventMedia[1]) && method === 'GET') {
+    return eventImage(db, storage, eventMedia[1], eventMedia[3] === undefined ? null : Number(eventMedia[3]));
+  }
   if (path === '/api/chat' && method === 'GET') {
     const viewer = await presenceViewer(db, request);
     return json({
@@ -1161,6 +1257,24 @@ async function route(db, storage, request) {
         failures: result.failures,
         recipients: recipients.length,
       });
+    }
+
+    if (path === '/api/admin/events' && method === 'GET') {
+      return json({ events: await listEvents(db) });
+    }
+    if (path === '/api/admin/events' && method === 'POST') {
+      return saveEvent(db, storage, request, admin);
+    }
+    const adminEvent = path.match(/^\/api\/admin\/events\/([0-9a-f-]{36})$/);
+    if (adminEvent && isUuid(adminEvent[1]) && method === 'PATCH') {
+      return saveEvent(db, storage, request, admin, adminEvent[1]);
+    }
+    if (adminEvent && isUuid(adminEvent[1]) && method === 'DELETE') {
+      assertCanWrite(admin);
+      const updated = rows(await db.from('events').update({ deleted: true, updated_at: new Date().toISOString() })
+        .eq('id', adminEvent[1]).eq('deleted', false).select('id'));
+      if (updated.length !== 1) throw new AppError('not_found', 404);
+      return json({ ok: true });
     }
 
     if (path === '/api/admin/notices' && method === 'GET') {

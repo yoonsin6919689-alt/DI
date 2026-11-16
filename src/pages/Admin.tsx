@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useState, type FormEvent } from "react";
 import {
-  BadgeCheck, Download, House, LoaderCircle, Mail, MessagesSquare, NotebookPen, Pencil, Plus,
+  BadgeCheck, Download, Gift, House, LoaderCircle, Mail, MessagesSquare, NotebookPen, Pencil, Plus,
   RefreshCw, ScrollText, Send, Settings, ShieldAlert, Sparkles, Trash, UserPlus, Users,
 } from "lucide-react";
 import { Link } from "@/lib/router";
@@ -13,13 +13,15 @@ import type {
   Notice, SiteConfig, UpdateEntry,
 } from "@/lib/types";
 import { PageHeader } from "@/components/Layout";
+import { AdminEventsTab } from "@/components/AdminEvents";
 
-type Tab = "overview" | "notices" | "updates" | "posts" | "settings" | "members" | "verify" | "mail" | "chat";
+type Tab = "overview" | "notices" | "updates" | "events" | "posts" | "settings" | "members" | "verify" | "mail" | "chat";
 
 const TABS: { id: Tab; label: string; icon: typeof House }[] = [
   { id: "overview", label: "개요", icon: House },
   { id: "notices", label: "공지", icon: ScrollText },
   { id: "updates", label: "업데이트", icon: Sparkles },
+  { id: "events", label: "이벤트", icon: Gift },
   { id: "posts", label: "게시판", icon: NotebookPen },
   { id: "settings", label: "서버 설정", icon: Settings },
   { id: "members", label: "회원", icon: Users },
@@ -1132,7 +1134,7 @@ export function AdminPage() {
       <PageHeader
         eyebrow="ADMIN"
         title="관리자"
-        description="공지, 업데이트, 서버 정보, 회원과 채팅을 관리합니다."
+        description="공지, 업데이트, 이벤트, 서버 정보, 회원과 채팅을 관리합니다."
       />
 
       <div className="admin-tabs" role="tablist" aria-label="관리자 메뉴">
@@ -1154,6 +1156,7 @@ export function AdminPage() {
       {tab === "overview" && <OverviewTab onGo={setTab} />}
       {tab === "notices" && <NoticesTab />}
       {tab === "updates" && <UpdatesTab />}
+      {tab === "events" && <AdminEventsTab />}
       {tab === "posts" && <PostsTab />}
       {tab === "settings" && <SettingsTab />}
       {tab === "members" && <MembersTab />}

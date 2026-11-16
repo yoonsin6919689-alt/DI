@@ -12,6 +12,7 @@ import { parseWorldCards } from "@/lib/worldCards";
 import { isAppShell, isIosDevice } from "@/lib/platform";
 import type { Notice, UpdateEntry } from "@/lib/types";
 import { ConnectCard } from "@/components/ConnectCard";
+import { EventCarousel } from "@/components/EventCarousel";
 
 const WORLD_ICONS: Record<string, typeof Sparkles> = {
   Sparkles, Users, Zap, Anvil, Hammer, Fish, Compass, PawPrint,
@@ -127,36 +128,39 @@ export function HomePage() {
         </section>
       </div>
 
-      <section className="wrap section" aria-labelledby="home-update-title">
-        <div className="section-head">
-          <div>
-            <p className="eyebrow">PATCH NOTES</p>
-            <h2 id="home-update-title" className="section-title">업데이트</h2>
+      <div className="wrap section home-news">
+        <section className="home-updates" aria-labelledby="home-update-title">
+          <div className="section-head">
+            <div>
+              <p className="eyebrow">PATCH NOTES</p>
+              <h2 id="home-update-title" className="section-title">업데이트</h2>
+            </div>
+            <Link to="/updates" className="text-link">전체 보기 <ChevronRight size={15} /></Link>
           </div>
-          <Link to="/updates" className="text-link">전체 보기 <ChevronRight size={15} /></Link>
-        </div>
 
-        {loading ? (
-          <div className="update-grid">
-            <div className="card skeleton-card" /><div className="card skeleton-card" /><div className="card skeleton-card" />
-          </div>
-        ) : updates.length === 0 ? (
-          <p className="empty-note">첫 업데이트 노트를 준비하고 있습니다.</p>
-        ) : (
-          <div className="update-grid">
-            {updates.slice(0, 3).map((entry) => (
-              <Link key={entry.id} to="/updates" className="card update-card">
-                <div className="update-card-head">
-                  <span className="version-chip">{entry.version}</span>
-                  <span className="update-date">{formatRelative(entry.createdAt)}</span>
-                </div>
-                <h3>{entry.title}</h3>
-                <p>{entry.body.split("\n")[0]}</p>
-              </Link>
-            ))}
-          </div>
-        )}
-      </section>
+          {loading ? (
+            <div className="home-update-stack">
+              <div className="card skeleton-card" /><div className="card skeleton-card" /><div className="card skeleton-card" />
+            </div>
+          ) : updates.length === 0 ? (
+            <p className="empty-note">첫 업데이트 노트를 준비하고 있습니다.</p>
+          ) : (
+            <div className="home-update-stack">
+              {updates.slice(0, 3).map((entry) => (
+                <Link key={entry.id} to="/updates" className="card update-card">
+                  <div className="update-card-head">
+                    <span className="version-chip">{entry.version}</span>
+                    <span className="update-date">{formatRelative(entry.createdAt)}</span>
+                  </div>
+                  <h3>{entry.title}</h3>
+                  <p>{entry.body.split("\n")[0]}</p>
+                </Link>
+              ))}
+            </div>
+          )}
+        </section>
+        <EventCarousel />
+      </div>
 
       <section className="wrap section" aria-labelledby="home-world-title">
         <div className="section-head">

@@ -1,6 +1,6 @@
-import type { ReactNode } from "react";
+import { useEffect, useRef, type ReactNode } from "react";
 import {
-  House, Images, MessagesSquare, NotebookPen, ScrollText, ShieldCheck, Sparkles, UserRound,
+  Gift, House, Images, MessagesSquare, NotebookPen, ScrollText, ShieldCheck, Sparkles, UserRound,
 } from "lucide-react";
 import { Link, useRoute } from "@/lib/router";
 import { useSession } from "@/lib/session";
@@ -14,6 +14,7 @@ const NAV = [
   { to: "/board/free", label: "자유게시판", short: "자유", icon: NotebookPen },
   { to: "/board/photo", label: "사진게시판", short: "사진", icon: Images },
   { to: "/updates", label: "업데이트", short: "업데이트", icon: Sparkles },
+  { to: "/events", label: "이벤트", short: "이벤트", icon: Gift },
   { to: "/chat", label: "채팅", short: "채팅", icon: MessagesSquare },
 ];
 
@@ -82,8 +83,18 @@ export function BottomNav() {
     ...NAV,
     { to: user ? "/account" : "/login", label: user ? "내 정보" : "로그인", short: user ? "내 정보" : "로그인", icon: UserRound },
   ];
+  const navRef = useRef<HTMLElement>(null);
+  useEffect(() => {
+    const nav = navRef.current;
+    const active = nav?.querySelector<HTMLElement>('[aria-current="page"]');
+    if (!nav || !active) return;
+    const left = active.offsetLeft;
+    const right = left + active.offsetWidth;
+    if (left < nav.scrollLeft) nav.scrollLeft = left;
+    else if (right > nav.scrollLeft + nav.clientWidth) nav.scrollLeft = right - nav.clientWidth;
+  }, [path, user]);
   return (
-    <nav className="bottom-nav" aria-label="모바일 메뉴">
+    <nav ref={navRef} className="bottom-nav" aria-label="모바일 메뉴 (좌우 스크롤)">
       {items.map(({ to, label, short, icon: Icon }) => {
         const active = isActive(path, to);
         return (
@@ -112,6 +123,7 @@ export function Footer() {
         <nav className="footer-links" aria-label="바닥글 메뉴">
           <Link to="/notices">공지사항</Link>
           <Link to="/updates">업데이트</Link>
+          <Link to="/events">이벤트</Link>
           <Link to="/board/free">자유게시판</Link>
           <Link to="/board/photo">사진게시판</Link>
           <Link to="/chat">커뮤니티</Link>

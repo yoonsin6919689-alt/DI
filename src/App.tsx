@@ -9,6 +9,8 @@ import { SignupPage } from "@/pages/Signup";
 import { NoticesPage } from "@/pages/Notices";
 import { NoticeDetailPage } from "@/pages/NoticeDetail";
 import { UpdatesPage } from "@/pages/Updates";
+import { EventsPage } from "@/pages/Events";
+import { EventDetailPage } from "@/pages/EventDetail";
 import { ChatPage } from "@/pages/Chat";
 import { BoardPage } from "@/pages/Board";
 import { PostDetailPage } from "@/pages/PostDetail";
@@ -40,6 +42,7 @@ function Routes() {
       "/signup": "회원가입",
       "/notices": "공지사항",
       "/updates": "업데이트",
+      "/events": "이벤트",
       "/board/free": "자유게시판",
       "/board/photo": "사진게시판",
       "/chat": "커뮤니티 채팅",
@@ -49,6 +52,7 @@ function Routes() {
     const section =
       titles[path] ??
       (path.startsWith("/notices/") ? "공지사항" : null) ??
+      (path.startsWith("/events/") ? "이벤트" : null) ??
       (path.startsWith("/board/free/") ? "자유게시판" : null) ??
       (path.startsWith("/board/photo/") ? "사진게시판" : null);
     document.title = section ? `${section} · ${name}` : `${name} · ${config.tagline}`;
@@ -61,6 +65,16 @@ function Routes() {
   const noticeMatch = path.match(/^\/notices\/([^/]+)$/);
   if (noticeMatch) return <NoticeDetailPage id={decodeURIComponent(noticeMatch[1])} />;
   if (path === "/updates") return <UpdatesPage />;
+  if (path === "/events") return <EventsPage />;
+  const eventMatch = path.match(/^\/events\/([^/]+)$/);
+  if (eventMatch) {
+    try {
+      const id = decodeURIComponent(eventMatch[1]);
+      return <EventDetailPage key={id} id={id} />;
+    } catch {
+      return <NotFoundPage />;
+    }
+  }
   if (path === "/board/free") return <BoardPage board="free" />;
   if (path === "/board/photo") return <BoardPage board="photo" />;
   const postMatch = path.match(/^\/board\/(free|photo)\/([^/]+)$/);

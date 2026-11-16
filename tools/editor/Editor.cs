@@ -64,6 +64,62 @@ namespace DimensionEditor
         public string Text = "";
     }
 
+    internal sealed class EventPhoto
+    {
+        public byte[] Bytes;
+        public string ContentType;
+        public string UploadedPath = "";
+    }
+
+    internal sealed class EventBlock
+    {
+        public string Type = "text";
+        public string Text = "";
+        public string ImagePath = "";
+        public string Caption = "";
+        // Preview URLs refer to the saved index, not the current draft order.
+        public string PreviewUrl = "";
+        public EventPhoto Photo;
+
+        public EventBlock Copy()
+        {
+            return (EventBlock)MemberwiseClone();
+        }
+
+        public override string ToString()
+        {
+            string text = Type == "image" ? Caption : Text;
+            text = text.Replace("\r", " ").Replace("\n", " ");
+            if (text.Length > 45) text = text.Substring(0, 45) + "…";
+            return (Type == "image" ? "사진 · " : "텍스트 · ") + text;
+        }
+    }
+
+    internal sealed class EventEntry
+    {
+        public string Id = "";
+        public string Title = "";
+        public string ThumbnailPath = "";
+        public string CreatedAt = "";
+        public string UpdatedAt = "";
+        public string ThumbnailUrl = "";
+        public EventPhoto ThumbnailPhoto;
+        public List<EventBlock> Blocks = new List<EventBlock>();
+
+        public EventEntry Copy()
+        {
+            EventEntry copy = (EventEntry)MemberwiseClone();
+            copy.Blocks = new List<EventBlock>();
+            foreach (EventBlock block in Blocks) copy.Blocks.Add(block.Copy());
+            return copy;
+        }
+
+        public override string ToString()
+        {
+            return Title;
+        }
+    }
+
     internal sealed class Member
     {
         public string Id = "";
@@ -122,6 +178,14 @@ namespace DimensionEditor
             { "mail_not_configured", "메일 릴레이가 설정되지 않았습니다. 릴레이 주소와 토큰을 먼저 저장해 주세요." },
             { "mail_failed", "메일을 보내지 못했습니다. 릴레이 설정을 확인해 주세요." },
             { "no_recipients", "메일을 받을 회원이 없습니다. 이메일과 수신 동의를 확인해 주세요." },
+            { "event_title", "이벤트 제목은 1~120자로 입력해 주세요." },
+            { "event_thumbnail", "별도의 썸네일 사진을 선택해 주세요." },
+            { "event_blocks", "본문은 1~24개 블록, 사진은 최대 8개로 구성해 주세요." },
+            { "event_text", "본문 텍스트와 사진 설명의 합계는 8,000자까지입니다." },
+            { "event_empty_text", "빈 텍스트 블록에 글을 입력하거나 해당 블록을 삭제해 주세요." },
+            { "event_photo", "사진을 확인해 주세요. 이 편집기는 PNG/JPEG, 최대 6 MiB를 지원합니다." },
+            { "photo_too_large", "사진 크기는 최대 6 MiB이며 서버 업로드 한도를 넘을 수 없습니다." },
+            { "photo_upload_failed", "사진을 업로드하지 못했습니다. 초안은 유지됩니다. 다시 저장해 주세요." },
         };
 
         public static string For(EditorException error)
@@ -313,6 +377,179 @@ namespace DimensionEditor
             Dictionary<string, object> data = Send("/api/admin/mail", "POST", payload, 90000);
             if (data == null || !data.ContainsKey("sent")) throw new EditorException("invalid_response");
             return data;
+        }
+
+        public List<EventEntry> Events()
+        {
+            Dictionary<string, object> data = Send("/api/admin/events", "GET", null, 20000);
+            object raw;
+            object[] items = data != null && data.TryGetValue("events", out raw) ? raw as object[] : null;
+            if (items == null) throw new EditorException("invalid_response");
+            List<EventEntry> result = new List<EventEntry>();
+            foreach (object item in items) result.Add(ToEvent(item as Dictionary<string, object>));
+            return result;
+        }
+
+        public static void ValidateEvent(EventEntry entry)
+        {
+            if (entry.Title.Trim().Length == 0 || entry.Title.Length > 120)
+                throw new EditorException("event_title");
+            if (entry.ThumbnailPath.Length == 0 && entry.ThumbnailPhoto == null)
+                throw new EditorException("event_thumbnail");
+            if (entry.Blocks.Count < 1 || entry.Blocks.Count > 24)
+                throw new EditorException("event_blocks");
+            int images = 0;
+            int textLength = 0;
+            foreach (EventBlock block in entry.Blocks)
+            {
+                if (block.Type == "text")
+                {
+                    if (block.Text.Trim().Length == 0) throw new EditorException("event_empty_text");
+                    textLength += block.Text.Length;
+                }
+                else if (block.Type == "image")
+                {
+                    images += 1;
+                    textLength += block.Caption.Length;
+                    if (block.ImagePath.Length == 0 && block.Photo == null)
+                        throw new EditorException("event_photo");
+                }
+                else throw new EditorException("event_blocks");
+            }
+            if (images > 8) throw new EditorException("event_blocks");
+            if (textLength > 8000) throw new EditorException("event_text");
+        }
+
+        public EventEntry SaveEvent(EventEntry entry)
+        {
+            ValidateEvent(entry);
+            // Cache each successful upload on the draft, even if a later upload/save fails.
+            if (entry.ThumbnailPhoto != null)
+            {
+                if (entry.ThumbnailPhoto.UploadedPath.Length == 0)
+                    entry.ThumbnailPhoto.UploadedPath = UploadPhoto(entry.ThumbnailPhoto.Bytes, entry.ThumbnailPhoto.ContentType);
+                entry.ThumbnailPath = entry.ThumbnailPhoto.UploadedPath;
+            }
+            List<Dictionary<string, object>> blocks = new List<Dictionary<string, object>>();
+            foreach (EventBlock block in entry.Blocks)
+            {
+                Dictionary<string, object> item = new Dictionary<string, object>();
+                item["type"] = block.Type;
+                if (block.Type == "image")
+                {
+                    if (block.Photo != null)
+                    {
+                        if (block.Photo.UploadedPath.Length == 0)
+                            block.Photo.UploadedPath = UploadPhoto(block.Photo.Bytes, block.Photo.ContentType);
+                        block.ImagePath = block.Photo.UploadedPath;
+                    }
+                    item["imagePath"] = block.ImagePath;
+                    item["caption"] = block.Caption;
+                }
+                else item["text"] = block.Text;
+                blocks.Add(item);
+            }
+            Dictionary<string, object> payload = new Dictionary<string, object>();
+            payload["title"] = entry.Title;
+            payload["thumbnailPath"] = entry.ThumbnailPath;
+            payload["blocks"] = blocks;
+            string path = "/api/admin/events";
+            if (entry.Id.Length > 0) path += "/" + Uri.EscapeDataString(entry.Id);
+            Dictionary<string, object> data = Send(path, entry.Id.Length == 0 ? "POST" : "PATCH", payload, 30000);
+            object raw;
+            if (data == null || !data.TryGetValue("event", out raw)) throw new EditorException("invalid_response");
+            return ToEvent(raw as Dictionary<string, object>);
+        }
+
+        public void DeleteEvent(string id)
+        {
+            Dictionary<string, object> data = Send("/api/admin/events/" + Uri.EscapeDataString(id), "DELETE", null, 20000);
+            object ok;
+            if (data == null || !data.TryGetValue("ok", out ok) || !(ok is bool) || !(bool)ok)
+                throw new EditorException("invalid_response");
+        }
+
+        public string UploadPhoto(byte[] bytes, string contentType)
+        {
+            if (bytes == null || bytes.Length == 0 || bytes.Length > 6 * 1024 * 1024)
+                throw new EditorException("photo_too_large");
+            if (contentType != "image/png" && contentType != "image/jpeg" && contentType != "image/webp")
+                throw new EditorException("event_photo");
+            Dictionary<string, object> payload = new Dictionary<string, object>();
+            payload["contentType"] = contentType;
+            payload["size"] = bytes.Length;
+            Dictionary<string, object> data = Send("/api/uploads/photo", "POST", payload, 20000);
+            object max;
+            long maxBytes;
+            if (data == null || !data.TryGetValue("maxBytes", out max)
+                || !long.TryParse(Convert.ToString(max, CultureInfo.InvariantCulture), out maxBytes)
+                || maxBytes <= 0) throw new EditorException("invalid_response");
+            if (bytes.Length > maxBytes) throw new EditorException("photo_too_large");
+            string objectPath = ReadString(data, "objectPath");
+            string uploadUrl = ReadString(data, "uploadUrl");
+            if (objectPath.Length == 0 || uploadUrl.Length == 0) throw new EditorException("invalid_response");
+            Uri target;
+            if (!Uri.TryCreate(new Uri(BaseUrl + "/"), uploadUrl, out target)
+                || (target.Scheme != "https" && target.Scheme != "http") || target.UserInfo.Length > 0)
+                throw new EditorException("invalid_response");
+            // Do NOT use Send: signed storage URLs must retain their query and never receive the app token.
+            HttpWebRequest request = (HttpWebRequest)WebRequest.Create(target);
+            request.Method = "PUT";
+            request.ContentType = contentType;
+            request.ContentLength = bytes.Length;
+            request.Timeout = 60000;
+            request.ReadWriteTimeout = 60000;
+            request.AllowAutoRedirect = false;
+            request.Credentials = null;
+            try
+            {
+                using (Stream stream = request.GetRequestStream()) stream.Write(bytes, 0, bytes.Length);
+                using (HttpWebResponse response = (HttpWebResponse)request.GetResponse())
+                {
+                    if ((int)response.StatusCode < 200 || (int)response.StatusCode >= 300)
+                        throw new EditorException("photo_upload_failed");
+                }
+            }
+            catch (WebException error)
+            {
+                if (error.Response != null) error.Response.Close();
+                throw new EditorException("photo_upload_failed");
+            }
+            return objectPath;
+        }
+
+        private EventEntry ToEvent(Dictionary<string, object> map)
+        {
+            if (map == null) throw new EditorException("invalid_response");
+            EventEntry entry = new EventEntry();
+            entry.Id = ReadString(map, "id");
+            entry.Title = ReadString(map, "title");
+            entry.ThumbnailPath = ReadString(map, "thumbnailPath");
+            entry.CreatedAt = ReadString(map, "createdAt");
+            entry.UpdatedAt = ReadString(map, "updatedAt");
+            object raw;
+            object[] blocks = map.TryGetValue("blocks", out raw) ? raw as object[] : null;
+            if (entry.Id.Length == 0 || blocks == null) throw new EditorException("invalid_response");
+            string prefix = BaseUrl + "/functions/v1/app/api/events/" + Uri.EscapeDataString(entry.Id);
+            string version = "?v=" + Uri.EscapeDataString(entry.UpdatedAt);
+            entry.ThumbnailUrl = prefix + "/thumbnail" + version;
+            for (int index = 0; index < blocks.Length; index += 1)
+            {
+                Dictionary<string, object> item = blocks[index] as Dictionary<string, object>;
+                if (item == null) throw new EditorException("invalid_response");
+                EventBlock block = new EventBlock();
+                block.Type = ReadString(item, "type");
+                if (block.Type == "text") block.Text = ReadString(item, "text");
+                else if (block.Type == "image")
+                {
+                    block.ImagePath = ReadString(item, "imagePath");
+                    block.Caption = ReadString(item, "caption");
+                    block.PreviewUrl = prefix + "/images/" + index.ToString(CultureInfo.InvariantCulture) + version;
+                }
+                else throw new EditorException("invalid_response");
+                entry.Blocks.Add(block);
+            }
+            return entry;
         }
 
         public void Logout()
@@ -603,8 +840,45 @@ namespace DimensionEditor
         private string adminUsername = "";
         private Member selectedMember;
 
-        public MainForm()
+        private readonly bool restoreSession;
+        private readonly List<EventEntry> events = new List<EventEntry>();
+        private EventEntry eventDraft;
+        private EventBlock editingEventBlock;
+        private ListBox eventList;
+        private ListBox eventBlockList;
+        private TableLayoutPanel eventEditor;
+        private TextBox eventTitleBox;
+        private TextBox eventTextBox;
+        private Label eventBlockLabel;
+        private Label eventCount;
+        private Label eventNote;
+        private Label eventThumbnailNote;
+        private Label eventImageNote;
+        private PictureBox eventThumbnailPreview;
+        private PictureBox eventImagePreview;
+        private Button eventSaveButton;
+        private Button eventEditButton;
+        private Button eventDeleteButton;
+        private Button eventReplacePhotoButton;
+        private Button eventUpButton;
+        private Button eventDownButton;
+        private Button eventRemoveButton;
+        private Button eventAddTextButton;
+        private Button eventAddPhotoButton;
+        private bool eventsLoaded;
+        private bool eventsBusy;
+        private bool eventBinding;
+        private bool eventDirty;
+        private int eventSessionVersion;
+
+        public MainForm() : this(true)
         {
+        }
+
+        // Local reflection smoke tests use false; no saved session is read or restored.
+        internal MainForm(bool restoreSavedSession)
+        {
+            restoreSession = restoreSavedSession;
             AutoScaleMode = AutoScaleMode.Dpi;
             AutoScaleDimensions = new SizeF(96f, 96f);
             Text = "DIMENSION 홈페이지 편집기 v2.3";
@@ -647,11 +921,13 @@ namespace DimensionEditor
             tabs.BackColor = Theme.Bg;
             tabs.WrapContents = false;
             tabBar.Controls.Add(tabs);
-            tabButtons = new TabButton[6];
-            string[] titles = new string[] { "사이트 연결", "서버 정보", "홈 콘텐츠 카드", "회원 관리", "인증 요청", "메일 발송" };
+            tabButtons = new TabButton[7];
+            string[] titles = new string[] { "사이트 연결", "서버 정보", "홈 콘텐츠 카드", "회원 관리", "인증 요청", "메일 발송", "이벤트" };
             for (int index = 0; index < titles.Length; index += 1)
             {
                 TabButton button = new TabButton(titles[index]);
+                button.Width = 120;
+                button.Margin = new Padding(0);
                 int captured = index;
                 button.Click += delegate { SwitchTab(captured); };
                 tabButtons[index] = button;
@@ -664,13 +940,14 @@ namespace DimensionEditor
             content.BackColor = Theme.Bg;
             root.Controls.Add(content, 0, 2);
 
-            tabPanels = new Panel[6];
+            tabPanels = new Panel[7];
             tabPanels[0] = BuildConnectTab();
             tabPanels[1] = BuildServerTab();
             tabPanels[2] = BuildCardsTab();
             tabPanels[3] = BuildMembersTab();
             tabPanels[4] = BuildVerifyTab();
             tabPanels[5] = BuildMailTab();
+            tabPanels[6] = BuildEventsTab();
             for (int index = 0; index < tabPanels.Length; index += 1)
             {
                 tabPanels[index].Dock = DockStyle.Fill;
@@ -1579,6 +1856,633 @@ namespace DimensionEditor
             return tab;
         }
 
+        private Panel BuildEventsTab()
+        {
+            Panel tab = new Panel();
+            tab.BackColor = Theme.Bg;
+            tab.Padding = new Padding(24, 18, 24, 16);
+            tab.AutoScroll = true;
+            TableLayoutPanel layout = new TableLayoutPanel();
+            layout.Dock = DockStyle.Top;
+            layout.Height = 590;
+            layout.ColumnCount = 2;
+            layout.RowCount = 1;
+            layout.ColumnStyles.Add(new ColumnStyle(SizeType.Absolute, 226f));
+            layout.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 100f));
+            layout.RowStyles.Add(new RowStyle(SizeType.Percent, 100f));
+            tab.Controls.Add(layout);
+            tab.SizeChanged += delegate { layout.Height = Math.Max(590, tab.ClientSize.Height - tab.Padding.Vertical); };
+
+            TableLayoutPanel catalog = new TableLayoutPanel();
+            catalog.Dock = DockStyle.Fill;
+            catalog.ColumnCount = 1;
+            catalog.RowCount = 3;
+            catalog.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 100f));
+            catalog.RowStyles.Add(new RowStyle(SizeType.Absolute, 28f));
+            catalog.RowStyles.Add(new RowStyle(SizeType.Percent, 100f));
+            catalog.RowStyles.Add(new RowStyle(SizeType.Absolute, 84f));
+            catalog.Margin = new Padding(0, 0, 12, 0);
+            layout.Controls.Add(catalog, 0, 0);
+            catalog.Controls.Add(MakeLabel("이벤트 목록 · 선택 후 편집"), 0, 0);
+            eventList = MakeEventList();
+            eventList.SelectedIndexChanged += delegate { UpdateEventButtons(); };
+            eventList.DoubleClick += delegate { EditSelectedEvent(); };
+            catalog.Controls.Add(eventList, 0, 1);
+            FlowLayoutPanel actions = new FlowLayoutPanel();
+            actions.Dock = DockStyle.Fill;
+            actions.Margin = new Padding(0);
+            Button create = MakeButton("새 이벤트", false);
+            create.Width = 98;
+            create.Click += delegate { NewEvent(); };
+            eventEditButton = MakeButton("편집", false);
+            eventEditButton.Width = 98;
+            eventEditButton.Click += delegate { EditSelectedEvent(); };
+            eventDeleteButton = MakeButton("삭제", false);
+            eventDeleteButton.Width = 98;
+            eventDeleteButton.Click += delegate { DeleteSelectedEvent(); };
+            Button refresh = MakeButton("새로고침", false);
+            refresh.Width = 98;
+            refresh.Click += delegate { LoadEvents(); };
+            actions.Controls.Add(create);
+            actions.Controls.Add(eventEditButton);
+            actions.Controls.Add(eventDeleteButton);
+            actions.Controls.Add(refresh);
+            catalog.Controls.Add(actions, 0, 2);
+
+            eventEditor = new TableLayoutPanel();
+            eventEditor.Dock = DockStyle.Fill;
+            eventEditor.BackColor = Theme.Panel;
+            eventEditor.Padding = new Padding(12);
+            eventEditor.Margin = new Padding(0);
+            eventEditor.ColumnCount = 1;
+            eventEditor.RowCount = 8;
+            eventEditor.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 100f));
+            eventEditor.RowStyles.Add(new RowStyle(SizeType.Absolute, 26f));
+            eventEditor.RowStyles.Add(new RowStyle(SizeType.Absolute, 34f));
+            eventEditor.RowStyles.Add(new RowStyle(SizeType.Absolute, 114f));
+            eventEditor.RowStyles.Add(new RowStyle(SizeType.Absolute, 26f));
+            eventEditor.RowStyles.Add(new RowStyle(SizeType.Absolute, 40f));
+            eventEditor.RowStyles.Add(new RowStyle(SizeType.Percent, 100f));
+            eventEditor.RowStyles.Add(new RowStyle(SizeType.Absolute, 42f));
+            eventEditor.RowStyles.Add(new RowStyle(SizeType.Absolute, 48f));
+            layout.Controls.Add(eventEditor, 1, 0);
+            eventEditor.Controls.Add(MakeLabel("이벤트 제목 (필수 · 최대 120자)"), 0, 0);
+            eventTitleBox = MakeInput(false);
+            eventTitleBox.MaxLength = 120;
+            eventTitleBox.TextChanged += delegate
+            {
+                if (eventBinding || eventDraft == null) return;
+                eventDraft.Title = eventTitleBox.Text;
+                eventDirty = true;
+                UpdateEventButtons();
+            };
+            eventEditor.Controls.Add(eventTitleBox, 0, 1);
+
+            TableLayoutPanel thumbnail = new TableLayoutPanel();
+            thumbnail.Dock = DockStyle.Fill;
+            thumbnail.ColumnCount = 3;
+            thumbnail.RowCount = 2;
+            thumbnail.ColumnStyles.Add(new ColumnStyle(SizeType.Absolute, 126f));
+            thumbnail.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 100f));
+            thumbnail.ColumnStyles.Add(new ColumnStyle(SizeType.Absolute, 116f));
+            thumbnail.RowStyles.Add(new RowStyle(SizeType.Absolute, 36f));
+            thumbnail.RowStyles.Add(new RowStyle(SizeType.Percent, 100f));
+            eventThumbnailPreview = MakeEventPreview();
+            thumbnail.Controls.Add(eventThumbnailPreview, 0, 0);
+            thumbnail.SetRowSpan(eventThumbnailPreview, 2);
+            thumbnail.Controls.Add(MakeLabel("썸네일 (본문 사진과 별도 · 필수)"), 1, 0);
+            eventThumbnailNote = MakeNote();
+            eventThumbnailNote.Dock = DockStyle.Fill;
+            eventThumbnailNote.AutoSize = false;
+            eventThumbnailNote.Text = "PNG/JPEG · 최대 6 MiB\nWebP 선택/미리보기는 지원하지 않습니다.";
+            thumbnail.Controls.Add(eventThumbnailNote, 1, 1);
+            Button chooseThumbnail = MakeButton("썸네일 선택", false);
+            chooseThumbnail.Width = 112;
+            chooseThumbnail.Click += delegate { ChooseEventPhoto(true); };
+            thumbnail.Controls.Add(chooseThumbnail, 2, 0);
+            eventEditor.Controls.Add(thumbnail, 0, 2);
+
+            eventCount = MakeLabel("본문 · 일반 텍스트/사진 (HTML 없음)");
+            eventEditor.Controls.Add(eventCount, 0, 3);
+            FlowLayoutPanel blockActions = new FlowLayoutPanel();
+            blockActions.Dock = DockStyle.Fill;
+            blockActions.WrapContents = false;
+            blockActions.Margin = new Padding(0);
+            eventAddTextButton = MakeButton("텍스트 추가", false);
+            eventAddTextButton.Width = 104;
+            eventAddTextButton.Click += delegate { AddEventBlock(false); };
+            eventAddPhotoButton = MakeButton("사진 추가", false);
+            eventAddPhotoButton.Width = 98;
+            eventAddPhotoButton.Click += delegate { AddEventBlock(true); };
+            eventUpButton = MakeButton("위로", false);
+            eventUpButton.Width = 68;
+            eventUpButton.Click += delegate { MoveEventBlock(-1); };
+            eventDownButton = MakeButton("아래로", false);
+            eventDownButton.Width = 68;
+            eventDownButton.Click += delegate { MoveEventBlock(1); };
+            eventRemoveButton = MakeButton("블록 삭제", false);
+            eventRemoveButton.Width = 96;
+            eventRemoveButton.Click += delegate { RemoveEventBlock(); };
+            blockActions.Controls.Add(eventAddTextButton);
+            blockActions.Controls.Add(eventAddPhotoButton);
+            blockActions.Controls.Add(eventUpButton);
+            blockActions.Controls.Add(eventDownButton);
+            blockActions.Controls.Add(eventRemoveButton);
+            eventEditor.Controls.Add(blockActions, 0, 4);
+
+            TableLayoutPanel body = new TableLayoutPanel();
+            body.Dock = DockStyle.Fill;
+            body.ColumnCount = 2;
+            body.RowCount = 1;
+            body.ColumnStyles.Add(new ColumnStyle(SizeType.Absolute, 176f));
+            body.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 100f));
+            body.RowStyles.Add(new RowStyle(SizeType.Percent, 100f));
+            body.Margin = new Padding(0);
+            eventBlockList = MakeEventList();
+            eventBlockList.SelectedIndexChanged += delegate { if (!eventBinding) SelectEventBlock(); };
+            body.Controls.Add(eventBlockList, 0, 0);
+            TableLayoutPanel blockEditor = new TableLayoutPanel();
+            blockEditor.Dock = DockStyle.Fill;
+            blockEditor.ColumnCount = 1;
+            blockEditor.RowCount = 3;
+            blockEditor.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 100f));
+            blockEditor.RowStyles.Add(new RowStyle(SizeType.Absolute, 26f));
+            blockEditor.RowStyles.Add(new RowStyle(SizeType.Absolute, 104f));
+            blockEditor.RowStyles.Add(new RowStyle(SizeType.Percent, 100f));
+            body.Controls.Add(blockEditor, 1, 0);
+            eventBlockLabel = MakeLabel("본문 텍스트");
+            blockEditor.Controls.Add(eventBlockLabel, 0, 0);
+            Panel imagePanel = new Panel();
+            imagePanel.Dock = DockStyle.Fill;
+            eventImagePreview = MakeEventPreview();
+            imagePanel.Controls.Add(eventImagePreview);
+            eventImageNote = MakeNote();
+            eventImageNote.AutoSize = false;
+            eventImageNote.Dock = DockStyle.Bottom;
+            eventImageNote.Height = 22;
+            imagePanel.Controls.Add(eventImageNote);
+            eventReplacePhotoButton = MakeButton("사진 교체", false);
+            eventReplacePhotoButton.Dock = DockStyle.Right;
+            eventReplacePhotoButton.Width = 94;
+            eventReplacePhotoButton.Click += delegate { ChooseEventPhoto(false); };
+            imagePanel.Controls.Add(eventReplacePhotoButton);
+            blockEditor.Controls.Add(imagePanel, 0, 1);
+            eventTextBox = MakeInput(false);
+            eventTextBox.Multiline = true;
+            eventTextBox.AcceptsReturn = true;
+            eventTextBox.ScrollBars = ScrollBars.Vertical;
+            eventTextBox.MaxLength = 8000;
+            eventTextBox.TextChanged += delegate
+            {
+                if (eventBinding || editingEventBlock == null) return;
+                if (editingEventBlock.Type == "image") editingEventBlock.Caption = eventTextBox.Text;
+                else editingEventBlock.Text = eventTextBox.Text;
+                eventDirty = true;
+                // Updating the item must not reload the text box or disturb its caret.
+                int selected = eventBlockList.SelectedIndex;
+                if (selected >= 0)
+                {
+                    eventBinding = true;
+                    eventBlockList.Items[selected] = editingEventBlock;
+                    eventBinding = false;
+                }
+                UpdateEventButtons();
+            };
+            blockEditor.Controls.Add(eventTextBox, 0, 2);
+            eventEditor.Controls.Add(body, 0, 5);
+            eventSaveButton = MakeButton("이벤트 저장", true);
+            eventSaveButton.Width = 142;
+            eventSaveButton.Anchor = AnchorStyles.Right;
+            eventSaveButton.Click += delegate { SaveEventDraft(); };
+            eventEditor.Controls.Add(eventSaveButton, 0, 6);
+            eventNote = MakeNote();
+            eventNote.AutoSize = false;
+            eventNote.Dock = DockStyle.Fill;
+            eventNote.Text = "새 이벤트를 만들거나 목록에서 선택 후 편집해 주세요.";
+            eventEditor.Controls.Add(eventNote, 0, 7);
+            return tab;
+        }
+
+        private static ListBox MakeEventList()
+        {
+            ListBox list = new ListBox();
+            list.Dock = DockStyle.Fill;
+            list.IntegralHeight = false;
+            list.BackColor = Theme.Field;
+            list.ForeColor = Theme.Text;
+            list.BorderStyle = BorderStyle.FixedSingle;
+            list.HorizontalScrollbar = true;
+            return list;
+        }
+
+        private static PictureBox MakeEventPreview()
+        {
+            PictureBox picture = new PictureBox();
+            picture.Dock = DockStyle.Fill;
+            picture.BackColor = Theme.Field;
+            picture.SizeMode = PictureBoxSizeMode.Zoom;
+            return picture;
+        }
+
+        private void SetEventNote(string text, Color color)
+        {
+            eventNote.Text = text;
+            eventNote.ForeColor = color;
+        }
+
+        private void UpdateEventButtons()
+        {
+            bool ready = loggedIn && !eventsBusy;
+            bool draft = ready && eventDraft != null;
+            eventEditor.Enabled = draft;
+            eventEditButton.Enabled = ready && eventList.SelectedItem != null;
+            eventDeleteButton.Enabled = eventEditButton.Enabled;
+            eventSaveButton.Enabled = draft;
+            int selected = eventBlockList.SelectedIndex;
+            int count = eventDraft == null ? 0 : eventDraft.Blocks.Count;
+            int photos = 0;
+            int chars = 0;
+            if (eventDraft != null)
+            {
+                foreach (EventBlock block in eventDraft.Blocks)
+                {
+                    if (block.Type == "image") { photos += 1; chars += block.Caption.Length; }
+                    else chars += block.Text.Length;
+                }
+            }
+            eventAddTextButton.Enabled = draft && count < 24;
+            eventAddPhotoButton.Enabled = draft && count < 24 && photos < 8;
+            eventUpButton.Enabled = draft && selected > 0;
+            eventDownButton.Enabled = draft && selected >= 0 && selected < count - 1;
+            eventRemoveButton.Enabled = draft && selected >= 0;
+            eventTextBox.Enabled = draft && selected >= 0;
+            eventCount.Text = "본문 " + count + "/24 · 사진 " + photos + "/8 · 텍스트/설명 " + chars + "/8000자"
+                + (eventDirty ? " · 수정됨" : "");
+            eventCount.ForeColor = chars > 8000 ? Theme.Danger : Theme.Muted;
+        }
+
+        private bool DiscardEventDraft()
+        {
+            return !eventDirty || MessageBox.Show(this, "저장하지 않은 이벤트 초안을 버릴까요?", "이벤트 편집",
+                MessageBoxButtons.YesNo, MessageBoxIcon.Question) == DialogResult.Yes;
+        }
+
+        private void NewEvent()
+        {
+            if (!loggedIn || eventsBusy || !DiscardEventDraft()) return;
+            EventEntry entry = new EventEntry();
+            entry.Blocks.Add(new EventBlock());
+            BindEventDraft(entry);
+            SetEventNote("새 이벤트 · 썸네일을 선택하고 본문을 작성해 주세요. PNG/JPEG, 최대 6 MiB.", Theme.Muted);
+            eventTitleBox.Focus();
+        }
+
+        private void EditSelectedEvent()
+        {
+            EventEntry entry = eventList.SelectedItem as EventEntry;
+            if (!loggedIn || eventsBusy || entry == null || !DiscardEventDraft()) return;
+            BindEventDraft(entry.Copy());
+            SetEventNote("편집 중 · 텍스트/사진 순서와 기존 사진 경로가 함께 저장됩니다.", Theme.Muted);
+        }
+
+        private void BindEventDraft(EventEntry entry)
+        {
+            eventBinding = true;
+            eventDraft = entry;
+            editingEventBlock = null;
+            eventTitleBox.Text = entry == null ? "" : entry.Title;
+            eventBinding = false;
+            eventDirty = false;
+            RebuildEventBlocks(0);
+            LoadEventPreview(eventThumbnailPreview, eventThumbnailNote,
+                entry == null ? null : entry.ThumbnailPhoto, entry == null ? "" : entry.ThumbnailUrl);
+            UpdateEventButtons();
+        }
+
+        private void RebuildEventBlocks(int selected)
+        {
+            eventBinding = true;
+            eventBlockList.BeginUpdate();
+            eventBlockList.Items.Clear();
+            if (eventDraft != null)
+                foreach (EventBlock block in eventDraft.Blocks) eventBlockList.Items.Add(block);
+            if (eventBlockList.Items.Count > 0)
+                eventBlockList.SelectedIndex = Math.Max(0, Math.Min(selected, eventBlockList.Items.Count - 1));
+            eventBlockList.EndUpdate();
+            eventBinding = false;
+            SelectEventBlock();
+        }
+
+        private void SelectEventBlock()
+        {
+            editingEventBlock = eventBlockList.SelectedItem as EventBlock;
+            eventBinding = true;
+            bool image = editingEventBlock != null && editingEventBlock.Type == "image";
+            eventBlockLabel.Text = image ? "사진 설명 (일반 텍스트 · 선택)" : "본문 텍스트 (HTML 없음)";
+            eventTextBox.Text = editingEventBlock == null ? "" : (image ? editingEventBlock.Caption : editingEventBlock.Text);
+            TableLayoutPanel editor = (TableLayoutPanel)eventTextBox.Parent;
+            editor.RowStyles[1].Height = image ? 104f : 0f;
+            eventImagePreview.Parent.Visible = image;
+            eventBinding = false;
+            LoadEventPreview(eventImagePreview, eventImageNote,
+                image ? editingEventBlock.Photo : null, image ? editingEventBlock.PreviewUrl : "");
+            UpdateEventButtons();
+        }
+
+        private void AddEventBlock(bool image)
+        {
+            if (!loggedIn || eventsBusy || eventDraft == null || eventDraft.Blocks.Count >= 24) return;
+            EventPhoto photo = null;
+            if (image)
+            {
+                int count = 0;
+                foreach (EventBlock item in eventDraft.Blocks) if (item.Type == "image") count += 1;
+                if (count >= 8) return;
+                photo = PickEventPhoto();
+                if (photo == null) return;
+            }
+            EventBlock block = new EventBlock();
+            block.Type = image ? "image" : "text";
+            block.Photo = photo;
+            eventDraft.Blocks.Add(block);
+            eventDirty = true;
+            RebuildEventBlocks(eventDraft.Blocks.Count - 1);
+            eventTextBox.Focus();
+        }
+
+        private void MoveEventBlock(int direction)
+        {
+            if (!loggedIn || eventsBusy || eventDraft == null) return;
+            int index = eventBlockList.SelectedIndex;
+            int target = index + direction;
+            if (index < 0 || target < 0 || target >= eventDraft.Blocks.Count) return;
+            EventBlock block = eventDraft.Blocks[index];
+            eventDraft.Blocks.RemoveAt(index);
+            eventDraft.Blocks.Insert(target, block);
+            eventDirty = true;
+            RebuildEventBlocks(target);
+        }
+
+        private void RemoveEventBlock()
+        {
+            if (!loggedIn || eventsBusy || eventDraft == null) return;
+            int index = eventBlockList.SelectedIndex;
+            if (index < 0) return;
+            if (MessageBox.Show(this, "선택한 본문 블록을 삭제할까요?", "블록 삭제",
+                MessageBoxButtons.YesNo, MessageBoxIcon.Question) != DialogResult.Yes) return;
+            eventDraft.Blocks.RemoveAt(index);
+            eventDirty = true;
+            RebuildEventBlocks(index);
+        }
+
+        private void ChooseEventPhoto(bool thumbnail)
+        {
+            if (!loggedIn || eventsBusy || eventDraft == null) return;
+            if (!thumbnail && (editingEventBlock == null || editingEventBlock.Type != "image")) return;
+            EventPhoto photo = PickEventPhoto();
+            if (photo == null) return;
+            if (thumbnail)
+            {
+                eventDraft.ThumbnailPhoto = photo;
+                LoadEventPreview(eventThumbnailPreview, eventThumbnailNote, photo, "");
+            }
+            else
+            {
+                editingEventBlock.Photo = photo;
+                LoadEventPreview(eventImagePreview, eventImageNote, photo, "");
+            }
+            eventDirty = true;
+            UpdateEventButtons();
+        }
+
+        private EventPhoto PickEventPhoto()
+        {
+            using (OpenFileDialog dialog = new OpenFileDialog())
+            {
+                dialog.Title = "이벤트 사진 선택 · PNG/JPEG, 최대 6 MiB (WebP 미지원)";
+                dialog.Filter = "PNG/JPEG 사진 (*.png;*.jpg;*.jpeg)|*.png;*.jpg;*.jpeg";
+                dialog.CheckFileExists = true;
+                if (dialog.ShowDialog(this) != DialogResult.OK) return null;
+                try
+                {
+                    FileInfo info = new FileInfo(dialog.FileName);
+                    if (info.Length == 0 || info.Length > 6 * 1024 * 1024) throw new EditorException("photo_too_large");
+                    EventPhoto photo = new EventPhoto();
+                    photo.Bytes = File.ReadAllBytes(dialog.FileName);
+                    if (photo.Bytes.Length > 6 * 1024 * 1024) throw new EditorException("photo_too_large");
+                    using (MemoryStream stream = new MemoryStream(photo.Bytes))
+                    using (Image image = Image.FromStream(stream))
+                    {
+                        if (image.RawFormat.Guid == System.Drawing.Imaging.ImageFormat.Png.Guid) photo.ContentType = "image/png";
+                        else if (image.RawFormat.Guid == System.Drawing.Imaging.ImageFormat.Jpeg.Guid) photo.ContentType = "image/jpeg";
+                        else throw new EditorException("event_photo");
+                        if ((long)image.Width * image.Height > 40000000) throw new EditorException("event_photo");
+                    }
+                    return photo;
+                }
+                catch (EditorException error) { SetEventNote(Messages.For(error), Theme.Danger); }
+                catch { SetEventNote("사진을 읽을 수 없습니다. PNG/JPEG 파일을 확인해 주세요.", Theme.Danger); }
+                return null;
+            }
+        }
+
+        private static Image DecodeEventPreview(byte[] bytes)
+        {
+            using (MemoryStream stream = new MemoryStream(bytes))
+            using (Image source = Image.FromStream(stream))
+            {
+                if ((long)source.Width * source.Height > 40000000) throw new EditorException("event_photo");
+                double scale = Math.Min(1.0, Math.Min(480.0 / source.Width, 320.0 / source.Height));
+                return new Bitmap(source, Math.Max(1, (int)(source.Width * scale)), Math.Max(1, (int)(source.Height * scale)));
+            }
+        }
+
+        private void LoadEventPreview(PictureBox picture, Label note, EventPhoto photo, string url)
+        {
+            object marker = new object();
+            picture.Tag = marker;
+            Image previous = picture.Image;
+            picture.Image = null;
+            if (previous != null) previous.Dispose();
+            note.Text = "PNG/JPEG · 최대 6 MiB (WebP 미리보기 미지원)";
+            if (photo != null)
+            {
+                try { picture.Image = DecodeEventPreview(photo.Bytes); }
+                catch { note.Text = "미리보기 불가 · 선택한 사진은 유지됩니다."; }
+                return;
+            }
+            if (string.IsNullOrEmpty(url) || !IsHandleCreated) return;
+            note.Text = "미리보기 불러오는 중…";
+            Thread worker = new Thread(delegate()
+            {
+                Image loaded = null;
+                try
+                {
+                    // Public image endpoint only; never forward the administrator token.
+                    HttpWebRequest request = (HttpWebRequest)WebRequest.Create(url);
+                    request.Timeout = 10000;
+                    request.ReadWriteTimeout = 10000;
+                    using (WebResponse response = request.GetResponse())
+                    using (Stream input = response.GetResponseStream())
+                    using (MemoryStream buffer = new MemoryStream())
+                    {
+                        byte[] chunk = new byte[8192];
+                        int read;
+                        while ((read = input.Read(chunk, 0, chunk.Length)) > 0)
+                        {
+                            if (buffer.Length + read > 6 * 1024 * 1024) throw new EditorException("photo_too_large");
+                            buffer.Write(chunk, 0, read);
+                        }
+                        loaded = DecodeEventPreview(buffer.ToArray());
+                    }
+                }
+                catch (WebException error) { if (error.Response != null) error.Response.Close(); }
+                catch { }
+                Image result = loaded;
+                try
+                {
+                    BeginInvoke(new MethodInvoker(delegate
+                    {
+                        if (IsDisposed || picture.IsDisposed || picture.Tag != marker)
+                        {
+                            if (result != null) result.Dispose();
+                            return;
+                        }
+                        picture.Image = result;
+                        note.Text = result == null ? "미리보기 불가 (WebP/연결 확인) · 기존 사진 유지" : "기존 사진 · 경로 유지";
+                    }));
+                }
+                catch { if (result != null) result.Dispose(); }
+            });
+            worker.IsBackground = true;
+            worker.Start();
+        }
+
+        private void RefreshEventList(string selectedId)
+        {
+            eventList.BeginUpdate();
+            eventList.Items.Clear();
+            foreach (EventEntry entry in events)
+            {
+                int index = eventList.Items.Add(entry);
+                if (entry.Id == selectedId) eventList.SelectedIndex = index;
+            }
+            eventList.EndUpdate();
+            UpdateEventButtons();
+        }
+
+        private void RunEventAction(string message, Action<EditorApi> action, MethodInvoker completed)
+        {
+            if (!loggedIn || eventsBusy || api.Token.Length == 0) return;
+            eventsBusy = true;
+            int version = eventSessionVersion;
+            EditorApi client = new EditorApi(api.BaseUrl);
+            client.Token = api.Token;
+            tabPanels[6].Enabled = false;
+            foreach (TabButton button in tabButtons) button.Enabled = false;
+            Cursor = Cursors.WaitCursor;
+            SetEventNote(message, Theme.Muted);
+            Thread worker = new Thread(delegate()
+            {
+                string failure = null;
+                try { action(client); }
+                catch (EditorException error) { failure = Messages.For(error); }
+                catch { failure = "요청을 완료하지 못했습니다. 네트워크를 확인해 주세요."; }
+                string errorText = failure;
+                try
+                {
+                    BeginInvoke(new MethodInvoker(delegate
+                    {
+                        if (IsDisposed || version != eventSessionVersion) return;
+                        eventsBusy = false;
+                        tabPanels[6].Enabled = loggedIn;
+                        foreach (TabButton button in tabButtons) button.Enabled = true;
+                        Cursor = Cursors.Default;
+                        if (errorText == null) completed();
+                        else SetEventNote(errorText + " 초안은 유지됩니다.", Theme.Danger);
+                        UpdateEventButtons();
+                    }));
+                }
+                catch { /* The window closed while the request was running. */ }
+            });
+            worker.IsBackground = true;
+            worker.Start();
+        }
+
+        private void LoadEvents()
+        {
+            EventEntry selected = eventList.SelectedItem as EventEntry;
+            string selectedId = selected == null ? "" : selected.Id;
+            List<EventEntry> loaded = null;
+            RunEventAction("이벤트 목록을 불러오는 중…", delegate(EditorApi client) { loaded = client.Events(); }, delegate
+            {
+                events.Clear();
+                events.AddRange(loaded);
+                eventsLoaded = true;
+                RefreshEventList(selectedId);
+                SetEventNote("이벤트 " + events.Count + "개 · 목록을 새로 불러왔습니다. 편집 중인 초안은 유지됩니다.", Theme.Muted);
+            });
+        }
+
+        private void SaveEventDraft()
+        {
+            if (!loggedIn || eventsBusy || eventDraft == null) return;
+            try { EditorApi.ValidateEvent(eventDraft); }
+            catch (EditorException error) { SetEventNote(Messages.For(error), Theme.Danger); return; }
+            EventEntry draft = eventDraft;
+            EventEntry saved = null;
+            RunEventAction("사진 업로드 및 이벤트 저장 중…", delegate(EditorApi client) { saved = client.SaveEvent(draft); }, delegate
+            {
+                int index = events.FindIndex(delegate(EventEntry entry) { return entry.Id == saved.Id; });
+                if (index < 0) events.Insert(0, saved);
+                else events[index] = saved;
+                RefreshEventList(saved.Id);
+                BindEventDraft(saved.Copy());
+                SetEventNote("이벤트를 저장했습니다. 홈페이지에 반영됩니다.", Theme.Ok);
+            });
+        }
+
+        private void DeleteSelectedEvent()
+        {
+            EventEntry selected = eventList.SelectedItem as EventEntry;
+            if (!loggedIn || eventsBusy || selected == null) return;
+            string question = "선택한 이벤트를 삭제할까요?\n" + selected.Title;
+            if (eventDraft != null && eventDraft.Id == selected.Id && eventDirty)
+                question += "\n이 이벤트의 저장하지 않은 초안도 삭제됩니다.";
+            if (MessageBox.Show(this, question, "이벤트 삭제", MessageBoxButtons.YesNo, MessageBoxIcon.Warning) != DialogResult.Yes) return;
+            RunEventAction("이벤트를 삭제하는 중…", delegate(EditorApi client) { client.DeleteEvent(selected.Id); }, delegate
+            {
+                events.RemoveAll(delegate(EventEntry entry) { return entry.Id == selected.Id; });
+                if (eventDraft != null && eventDraft.Id == selected.Id) BindEventDraft(null);
+                RefreshEventList("");
+                SetEventNote("이벤트를 삭제했습니다.", Theme.Ok);
+            });
+        }
+
+        private void ResetEvents()
+        {
+            eventSessionVersion += 1;
+            eventsBusy = false;
+            eventsLoaded = false;
+            events.Clear();
+            eventList.Items.Clear();
+            BindEventDraft(null);
+            tabPanels[6].Enabled = false;
+            foreach (TabButton button in tabButtons) button.Enabled = true;
+            Cursor = Cursors.Default;
+            SetEventNote("새 이벤트를 만들거나 목록에서 선택 후 편집해 주세요.", Theme.Muted);
+        }
+
+        protected override void OnFormClosed(FormClosedEventArgs e)
+        {
+            eventSessionVersion += 1;
+            eventThumbnailPreview.Tag = null;
+            eventImagePreview.Tag = null;
+            if (eventThumbnailPreview.Image != null) eventThumbnailPreview.Image.Dispose();
+            if (eventImagePreview.Image != null) eventImagePreview.Image.Dispose();
+            base.OnFormClosed(e);
+        }
+
         private Control BuildFooter()
         {
             Panel footer = new Panel();
@@ -1728,7 +2632,8 @@ namespace DimensionEditor
 
         private void SwitchTab(int index)
         {
-            if (index < 0 || index > 5) index = 0;
+            if (eventsBusy) return;
+            if (index < 0 || index >= tabPanels.Length) index = 0;
             if (!loggedIn && index > 0)
             {
                 index = 0;
@@ -1747,6 +2652,7 @@ namespace DimensionEditor
             if (index == 3 && loggedIn) LoadMembers(false);
             if (index == 4 && loggedIn) LoadVerify();
             if (index == 5 && loggedIn && !mailLoaded) LoadMail(false);
+            if (index == 6 && loggedIn && !eventsLoaded) LoadEvents();
         }
 
         private void SetLoggedIn(bool on)
@@ -1760,10 +2666,13 @@ namespace DimensionEditor
                 members.Clear();
                 RefreshMemberView();
                 mailLoaded = false;
+                ResetEvents();
                 SwitchTab(0);
             }
             else
             {
+                tabPanels[6].Enabled = !eventsBusy;
+                UpdateEventButtons();
                 SwitchTab(1);
             }
         }
@@ -1771,6 +2680,7 @@ namespace DimensionEditor
         protected override void OnShown(EventArgs e)
         {
             base.OnShown(e);
+            if (!restoreSession) return;
             string site = Session.LoadSite();
             siteBox.Text = site.Length > 0 ? site : "https://dimension-mc-wvlzuyrjbqi.qoder.website";
             string savedUsername = Session.LoadUsername();
@@ -2784,6 +3694,7 @@ namespace DimensionEditor
 
         private void Logout()
         {
+            if (eventsBusy) return;
             api.Logout();
             ClearToken();
             cards.Clear();

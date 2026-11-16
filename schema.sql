@@ -68,6 +68,17 @@ CREATE TABLE app.updates (
 );
 CREATE INDEX updates_created_idx ON app.updates (created_at);
 
+CREATE TABLE app.events (
+  id uuid PRIMARY KEY,
+  title text NOT NULL,
+  content text NOT NULL,
+  thumbnail_path text NOT NULL,
+  deleted boolean NOT NULL DEFAULT false,
+  created_at timestamptz NOT NULL,
+  updated_at timestamptz NOT NULL
+);
+CREATE INDEX events_deleted_created_idx ON app.events (deleted, created_at);
+
 CREATE TABLE app.chat_messages (
   id uuid PRIMARY KEY,
   user_id uuid NOT NULL,
