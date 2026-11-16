@@ -33,7 +33,11 @@ else
     exit 1
   fi
 fi
-systemctl enable --now docker
+if command -v systemctl >/dev/null 2>&1; then
+  systemctl enable --now docker
+elif command -v service >/dev/null 2>&1; then
+  service docker start || true
+fi
 
 log "Opening ports $HTTP_PORT and 443 in the instance firewall"
 # Oracle images ship an iptables ruleset that REJECTs everything except SSH.
@@ -43,9 +47,9 @@ open_port() {
   if command -v firewall-cmd >/dev/null 2>&1 && firewall-cmd --state >/dev/null 2>&1; then
     firewall-cmd --permanent --add-port="${port}/tcp" >/dev/null
   elif command -v iptables >/dev/null 2>&1; then
-    # Insert before the catch-all REJECT rule rather than appending after it.
+    # Prepend so the rule lands above Oracle's catch-all REJECT.
     iptables -C INPUT -p tcp --dport "${port}" -j ACCEPT 2>/dev/null \
-      || iptables -I INPUT 6 -m state --state NEW -p tcp --dport "${port}" -j ACCEPT
+      || iptables -I INPUT 1 -p tcp --dport "${port}" -j ACCEPT
   fi
 }
 open_port "$HTTP_PORT"
