@@ -2,13 +2,13 @@ services:
   dimension:
     build: .
     ports:
-      - "8080:8080"
+      - "${HOST_PORT:-8080}:8080"
     environment:
-      # Required: keeps image URLs valid across restarts (any long random string).
-      STORAGE_SECRET: "change-me-to-a-long-random-string"
-      # Optional: the public origin used in signed image URLs. Set it to the
-      # address people actually visit, e.g. https://dimension.example.com.
-      # PUBLIC_ORIGIN: "https://dimension.example.com"
+      # Required: keeps image URLs valid across restarts. Set it in .env.
+      STORAGE_SECRET: "${STORAGE_SECRET:-change-me-to-a-long-random-string}"
+      # Optional: the public origin used in signed image URLs, e.g.
+      # http://1.2.3.4 or https://dimension.example.com.
+      PUBLIC_ORIGIN: "${PUBLIC_ORIGIN:-}"
     volumes:
       - dimension-data:/data
     restart: unless-stopped
