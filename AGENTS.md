@@ -57,9 +57,35 @@ Node 24 (or 22.13+) is required; `node:sqlite` needs no install or flag.
   public address.
 - Runtime data (`/data`: `app.db`, `objects/`) is a volume and is git-ignored.
 
+## Deploying
+
+Target is Oracle Cloud Always Free (no cost, always on, persistent disk).
+See `deploy/README.md` for the full walkthrough and `deploy/oracle-setup.sh`
+for the on-VM bootstrap. The short version:
+
+```bash
+git clone git@github.com:yoonsin6919689-alt/DI.git dimension && cd dimension
+sudo bash deploy/oracle-setup.sh          # Docker + instance firewall
+printf 'STORAGE_SECRET=%s\nPUBLIC_ORIGIN=http://%s\nHOST_PORT=80\n' \
+  "$(openssl rand -hex 32)" "$(curl -s ifconfig.me)" > .env
+sudo docker compose up -d --build
+```
+
+Two firewall layers must both be open or the site is unreachable: the instance
+iptables (the setup script handles it) and the VCN Security List in the web
+console (manual, port 80/443).
+
 ## Git
 
 - Remote: `git@github.com:yoonsin6919689-alt/DI.git`, branch `main`.
 - SSH push works via `~/.ssh/di_deploy` (config in `~/.ssh/config`). The
   `GITHUB_TOKEN` in the environment is a read-only GitHub App token and cannot
   push.
+
+## Why the site left Qoder
+
+Qoder Sites was free only during the launch/trial period, and the individual
+Free plan is static-only: "database and storage services are not supported"
+(docs.qoder.com/qoder/sites.md). DIMENSION needs a database and image storage,
+so it cannot run on the free tier. That is why the plan ran out mid-task.
+
